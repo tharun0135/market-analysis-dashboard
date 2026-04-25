@@ -40,7 +40,7 @@ class DataFetcher:
         "tesla": "TSLA",
         "meta": "META",
         "nvidia": "NVDA",
-        "reliance": "RELIANCE.NS",
+        "reliance": "RELIANCE.NS",  # Double check there are no hidden spaces
         "tcs": "TCS.NS",
         "infosys": "INFY.NS",
     }
