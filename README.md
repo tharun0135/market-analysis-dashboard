@@ -7,3 +7,4 @@ Backend: Python 3.11+, FastAPI, Pandas, NumPy, yfinance, Pytest Frontend: HTML5,
 
 Run the startup script: If you are on a Unix-like system (or using Git Bash/WSL), you can use the provided shell script to install dependencies and start the server:
 
+check here: https://tharun0135.github.io/market-analysis-dashboard/db.html
