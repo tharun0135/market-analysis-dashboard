@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Strategy Backtester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
+
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-blue-600">Trading Backtester Dashboard</h1>
+            <p class="text-gray-500">Powered by FastAPI & yfinance</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            
+            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 col-span-1">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">Configuration</h2>
+                
+                <form id="backtestForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Ticker</label>
+                        <select id="ticker" class="w-full border rounded p-2 bg-gray-50"></select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Time Period</label>
+                        <select id="period" class="w-full border rounded p-2 bg-gray-50">
+                            <option value="6mo">6 Months</option>
+                            <option value="1y" selected>1 Year</option>
+                            <option value="2y">2 Years</option>
+                            <option value="5y">5 Years</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Strategy</label>
+                        <select id="strategy" class="w-full border rounded p-2 bg-gray-50"></select>
+                    </div>
+
+                    <div id="dynamicParams" class="p-4 bg-blue-50 rounded border border-blue-100 space-y-3">
+                        <p class="text-xs text-blue-500 italic">Select a strategy to load parameters.</p>
+                    </div>
+
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">
+                        Run Backtest
+                    </button>
+                </form>
+            </div>
+
+            <div class="col-span-1 lg:col-span-3 space-y-6">
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="metricsPanel" style="display: none;">
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <p class="text-sm text-gray-500">Total Return</p>
+                        <p class="text-2xl font-bold" id="metricReturn">--</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <p class="text-sm text-gray-500">Win Rate</p>
+                        <p class="text-2xl font-bold" id="metricWinRate">--</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <p class="text-sm text-gray-500">Max Drawdown</p>
+                        <p class="text-2xl font-bold text-red-500" id="metricDrawdown">--</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <p class="text-sm text-gray-500">Total Trades</p>
+                        <p class="text-2xl font-bold" id="metricTrades">--</p>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                    <h2 class="text-xl font-semibold mb-4">Equity Curve vs Asset Price</h2>
+                    <canvas id="equityChart" height="100"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let chartInstance = null;
+        let strategyDefinitions = {};
+
+        async function init() {
+            try {
+                const [tickersRes, strategiesRes] = await Promise.all([
+                    fetch(`${API_BASE}/tickers`),
+                    fetch(`${API_BASE}/strategies`)
+                ]);
+
+                const tickers = await tickersRes.json();
+                strategyDefinitions = await strategiesRes.json();
+
+                const tickerSelect = document.getElementById('ticker');
+                tickers.forEach(t => {
+                    tickerSelect.innerHTML += `<option value="${t.value}">${t.label} (${t.value})</option>`;
+                });
+
+                const strategySelect = document.getElementById('strategy');
+                Object.entries(strategyDefinitions).forEach(([id, def]) => {
+                    strategySelect.innerHTML += `<option value="${id}">${def.label}</option>`;
+                });
+
+                renderParams(strategySelect.value);
+
+                strategySelect.addEventListener('change', (e) => renderParams(e.target.value));
+
+            } catch (error) {
+                console.error("Failed to connect to API:", error);
+                alert("Could not connect to the API. Is your FastAPI server running on port 8000?");
+            }
+        }
+
+        function renderParams(strategyId) {
+            const container = document.getElementById('dynamicParams');
+            container.innerHTML = `<h3 class="text-sm font-semibold mb-2">Strategy Parameters</h3>`;
+            
+            const params = strategyDefinitions[strategyId].params;
+            for (const [key, config] of Object.entries(params)) {
+                let inputHtml = '';
+                if (config.type === 'select') {
+                    const options = config.options.map(opt => `<option value="${opt}" ${opt === config.default ? 'selected' : ''}>${opt}</option>`).join('');
+                    inputHtml = `<select id="param_${key}" class="w-full border rounded p-1 text-sm">${options}</select>`;
+                } else {
+                    inputHtml = `<input type="number" id="param_${key}" value="${config.default}" min="${config.min}" max="${config.max}" step="${config.type === 'float' ? '0.1' : '1'}" class="w-full border rounded p-1 text-sm">`;
+                }
+                
+                container.innerHTML += `
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">${key.replace('_', ' ').toUpperCase()}</label>
+                        ${inputHtml}
+                    </div>
+                `;
+            }
+        }
+
+        document.getElementById('backtestForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const btn = e.target.querySelector('button');
+            const originalText = btn.innerText;
+            btn.innerText = 'Running...';
+            btn.disabled = true;
+
+            const strategyId = document.getElementById('strategy').value;
+            const params = {};
+            
+            Object.keys(strategyDefinitions[strategyId].params).forEach(key => {
+                const val = document.getElementById(`param_${key}`).value;
+                const type = strategyDefinitions[strategyId].params[key].type;
+                params[key] = type === 'select' ? val : Number(val);
+            });
+
+            const payload = {
+                ticker: document.getElementById('ticker').value,
+                strategy_id: strategyId,
+                period: document.getElementById('period').value,
+                interval: "1d",
+                initial_cash: 100000,
+                commission_pct: 0.001,
+                params: params
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/backtest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) throw new Error(await response.text());
+                
+                const result = await response.json();
+                updateDashboard(result);
+                
+            } catch (error) {
+                alert(`Backtest Error: ${error.message}`);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        });
+
+        function updateDashboard(data) {
+            document.getElementById('metricsPanel').style.display = 'grid';
+            
+            const colorClass = data.total_return_pct >= 0 ? 'text-green-500' : 'text-red-500';
+            document.getElementById('metricReturn').className = `text-2xl font-bold ${colorClass}`;
+            document.getElementById('metricReturn').innerText = `${data.total_return_pct.toFixed(2)}%`;
+            document.getElementById('metricWinRate').innerText = `${data.win_rate_pct.toFixed(1)}%`;
+            document.getElementById('metricDrawdown').innerText = `${data.max_drawdown_pct.toFixed(2)}%`;
+            document.getElementById('metricTrades').innerText = data.num_trades;
+
+            const dates = data.equity_curve.map(d => d.date);
+            const equity = data.equity_curve.map(d => d.equity);
+            const price = data.equity_curve.map(d => d.price);
+
+            if (chartInstance) chartInstance.destroy();
+
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        {
+                            label: 'Portfolio Equity ($)',
+                            data: equity,
+                            borderColor: 'rgba(37, 99, 235, 1)', 
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            borderWidth: 2,
+                            yAxisID: 'y',
+                            fill: true,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Asset Price ($)',
+                            data: price,
+                            borderColor: 'rgba(156, 163, 175, 1)', 
+                            borderWidth: 1.5,
+                            borderDash: [5, 5],
+                            yAxisID: 'y1',
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Equity ($)'} },
+                        y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Price ($)'} }
+                    }
+                }
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>
